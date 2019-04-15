@@ -830,6 +830,40 @@ HAPI_DECL HAPI_GetString( const HAPI_Session * session,
                           char * string_value,
                           int length );
 
+/// @brief  Adds the given string to the string table and returns 
+///         the handle. It is the responsibility of the caller to
+///         manage access to the string. The intended use for custom strings
+///         is to allow structs that reference strings to be passed in to HAPI
+///
+/// @param[in]      session
+///                 The session of Houdini you are interacting with.
+///                 See @ref HAPI_Sessions for more on sessions.
+///                 Pass NULL to just use the default in-process session.
+///
+/// @param[in]      string_value
+///                 Actual string value (character array).
+///
+/// @param[out]     handle_value
+///                 Handle of the string that was added
+///
+HAPI_DECL HAPI_SetCustomString( const HAPI_Session * session,
+                          const char * string_value,
+                          int *handle_value);
+
+/// @brief  Removes the specified string from the server
+///         and invalidates the handle
+///
+/// @param[in]      session
+///                 The session of Houdini you are interacting with.
+///                 See @ref HAPI_Sessions for more on sessions.
+///                 Pass NULL to just use the default in-process session.
+///
+/// @param[in]     string_handle
+///                 Handle of the string that was added
+///
+HAPI_DECL HAPI_RemoveCustomString( const HAPI_Session * session,
+                          const int string_handle);
+
 /// @brief  Gives back the length of the buffer needed to hold
 ///         all the values null-separated for the given string 
 ///         handles.  Used with HAPI_GetStringBatch.
@@ -4266,6 +4300,31 @@ HAPI_DECL HAPI_SetAttributeStringData( const HAPI_Session * session,
 ///                 Name of new group to be added.
 ///
 HAPI_DECL HAPI_AddGroup( const HAPI_Session * session,
+                         HAPI_NodeId node_id,
+                         HAPI_PartId part_id,
+                         HAPI_GroupType group_type,
+                         const char * group_name );
+
+/// @brief  Remove a group from the input geo with the given type and name.
+///
+/// @param[in]      session
+///                 The session of Houdini you are interacting with.
+///                 See @ref HAPI_Sessions for more on sessions.
+///                 Pass NULL to just use the default in-process session.
+///
+/// @param[in]      node_id
+///                 The SOP node id.
+///
+/// @param[in]      part_id
+///                 Currently not used. Just pass 0.
+///
+/// @param[in]      group_type
+///                 The group type.
+///
+/// @param[in]      group_name
+///                 Name of the group to be removed
+///
+HAPI_DECL HAPI_DeleteGroup( const HAPI_Session * session,
                          HAPI_NodeId node_id,
                          HAPI_PartId part_id,
                          HAPI_GroupType group_type,

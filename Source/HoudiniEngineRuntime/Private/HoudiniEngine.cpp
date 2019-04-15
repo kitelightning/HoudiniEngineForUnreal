@@ -236,7 +236,7 @@ FHoudiniEngine::StartupModule()
         auto UpdatePathForServer = [&] {
             // Modify our PATH so that HARC will find HARS.exe
             const TCHAR* PathDelimiter = FPlatformMisc::GetPathVarDelimiter();
-
+           
             FString OrigPathVar = FPlatformMisc::GetEnvironmentVariable(TEXT("PATH"));
 
             FString ModifiedPath =
@@ -351,6 +351,8 @@ FHoudiniEngine::StartupModule()
             CookOptions.clearErrorsAndWarnings = false;
             CookOptions.maxVerticesPerPrimitive = 3;
             CookOptions.splitGeosByGroup = false;
+            CookOptions.splitGeosByAttribute = false;
+            CookOptions.splitAttrSH = 0;
             CookOptions.refineCurveToLinear = true;
             CookOptions.handleBoxPartTypes = false;
             CookOptions.handleSpherePartTypes = false;
@@ -509,8 +511,8 @@ FHoudiniEngine::CookNode(
     bool ForceRebuildStaticMesh, bool ForceRecookAll,
     const TMap< FHoudiniGeoPartObject, UStaticMesh * > & StaticMeshesIn,
     TMap< FHoudiniGeoPartObject, UStaticMesh * > & StaticMeshesOut,
-    TMap< FHoudiniGeoPartObject, TWeakObjectPtr<ALandscape> >& LandscapesIn,
-    TMap< FHoudiniGeoPartObject, TWeakObjectPtr<ALandscape> >& LandscapesOut,
+    TMap< FHoudiniGeoPartObject, TWeakObjectPtr<ALandscapeProxy> >& LandscapesIn,
+    TMap< FHoudiniGeoPartObject, TWeakObjectPtr<ALandscapeProxy> >& LandscapesOut,
     TMap< FHoudiniGeoPartObject, USceneComponent * >& InstancersIn,
     TMap< FHoudiniGeoPartObject, USceneComponent * >& InstancersOut,
     USceneComponent* ParentComponent, FTransform & ComponentTransform )
@@ -547,7 +549,7 @@ FHoudiniEngine::CookNode(
     // The meshes are already created but we need to create the landscape too
     if ( FoundVolumes.Num() > 0 )
     {
-        TArray< ALandscape* > NullLandscapes;
+        TArray< ALandscapeProxy* > NullLandscapes;
         if ( !FHoudiniLandscapeUtils::CreateAllLandscapes( HoudiniCookParams, FoundVolumes, LandscapesIn, LandscapesOut, NullLandscapes , -200.0f, 200.0f ) )
             HOUDINI_LOG_WARNING( TEXT("FHoudiniEngine::CookNode : Failed to create landscapes!") );
     }
@@ -717,6 +719,8 @@ FHoudiniEngine::StartSession( HAPI_Session*& SessionPtr )
     CookOptions.clearErrorsAndWarnings = false;
     CookOptions.maxVerticesPerPrimitive = 3;
     CookOptions.splitGeosByGroup = false;
+    CookOptions.splitGeosByAttribute = false;
+    CookOptions.splitAttrSH = 0;
     CookOptions.refineCurveToLinear = true;
     CookOptions.handleBoxPartTypes = false;
     CookOptions.handleSpherePartTypes = false;

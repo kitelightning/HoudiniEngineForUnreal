@@ -41,7 +41,7 @@
 #include "Engine/Selection.h"
 #include "Internationalization/Internationalization.h"
 #include "HoudiniEngineRuntimePrivatePCH.h"
-
+#include "EngineUtils.h" // for TActorIterator<>
 #if WITH_EDITOR
     #include "UnrealEdGlobals.h"
     #include "Editor/UnrealEdEngine.h"
@@ -61,6 +61,10 @@ FHoudiniAssetInputOutlinerMesh::Serialize( FArchive & Ar )
     Ar << HoudiniAssetParameterVersion;
 
     Ar << ActorPtr;
+    if ( HoudiniAssetParameterVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_OUTLINER_INPUT_SAVE_ACTOR_PATHNAME )
+    {
+        Ar << ActorPathName;
+    }
 
     if ( HoudiniAssetParameterVersion < VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_OUTLINER_INPUT_SAVE_ACTOR_ONLY )
     {
@@ -238,7 +242,7 @@ FHoudiniAssetInputOutlinerMesh::NeedsComponentUpdate() const
     if ( SplineComponent && ( !SplineComponent->IsValidLowLevel() || SplineComponent->IsPendingKill() ) )
         return true;
 
-    if ( !StaticMeshComponent && !StaticMeshComponent && !SplineComponent )
+    if ( !StaticMesh && !StaticMeshComponent && !SplineComponent )
         return true;
 
     return false;
@@ -284,6 +288,9 @@ UHoudiniAssetInput *
 UHoudiniAssetInput::Create( UObject * InPrimaryObject, int32 InInputIndex, HAPI_NodeId InNodeId )
 {
     UHoudiniAssetInput * HoudiniAssetInput = nullptr;
+
+    if (!InPrimaryObject || InPrimaryObject->IsPendingKill())
+        return HoudiniAssetInput;
 
     // Get name of this input.
     HAPI_StringHandle InputStringHandle;
@@ -575,7 +582,7 @@ UHoudiniAssetInput::ForceSetInputObject(UObject * InObject, int32 AtIndex, bool 
         }
 
         // Looking for Landscapes
-        if ( ALandscapeProxy * Landscape = Cast< ALandscapeProxy >( Actor ) )
+        if (ALandscapeProxy * Landscape = Cast< ALandscapeProxy >( Actor ) )
         {
             // Store new landscape.
             OnLandscapeActorSelected( Actor );
@@ -711,17 +718,23 @@ UHoudiniAssetInput::UploadParameterValue()
                 && !InputAssetComponent->IsPendingKill()
                 && FHoudiniEngineUtils::IsValidNodeId( InputAssetComponent->GetAssetId() ) )
             {
+                // Connect a new asset / we have previously connected asset 
                 if (!bInputAssetConnectedInHoudini)
                     ConnectInputAssetActor();
                 else
                     bChanged = false;
+
+                Success &= bInputAssetConnectedInHoudini;
+                Success &= UpdateObjectMergeTransformType();
             }
             else if ( bInputAssetConnectedInHoudini && ( !InputAssetComponent || InputAssetComponent->IsPendingKill() ) )
             {
+                // Previously connected asset deleted/invalid
                 DisconnectInputAssetActor();
             }
             else
             {
+                // Nothing to connect
                 bChanged = false;
                 if ( InputAssetComponent )
                     return false;
@@ -1181,7 +1194,7 @@ UHoudiniAssetInput::PostLoad()
     if (InputOutlinerMeshArray.Num() > 0)
     {
         // Proper initialization of the outliner inputs is delayed to the first WorldTick,
-        // As some of the Actors' components might not be preoperly initalized yet
+        // As some of the Actors' components might not be properly initialized yet
         OutlinerInputsNeedPostLoadInit = true;
 
 #if WITH_EDITOR
@@ -1625,7 +1638,8 @@ UHoudiniAssetInput::ChangeInputType(const EHoudiniAssetInputType::Enum& newType,
 
             // Create new spline component if necessary.
             USceneComponent* RootComp = GetHoudiniAssetComponent();
-            if( RootComp && !RootComp->IsPendingKill() )
+            if( RootComp && !RootComp->IsPendingKill()
+                && RootComp->GetOwner() && !RootComp->GetOwner()->IsPendingKill() )
             {
                 if( !InputCurve || InputCurve->IsPendingKill() )
                 {
@@ -1865,9 +1879,31 @@ UHoudiniAssetInput::TickWorldOutlinerInputs()
         return;
 
     // PostLoad initialization must be done on the first tick
-    // as some components might now have been fully initialized at PostLoad()
+    // as some components might now have been fully initialized during PostLoad()
     if ( OutlinerInputsNeedPostLoadInit )
     {
+        UWorld* editorWorld = GEditor->GetEditorWorldContext().World();
+        for (auto & OutlinerInput : InputOutlinerMeshArray)
+        {
+            if (OutlinerInput.ActorPtr.IsValid())
+                continue;
+
+            if (OutlinerInput.ActorPathName.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+                continue;
+
+            // The actor pointer is invalid, 
+            // See if we can use the saved pathname to find the actor back
+            // Invalid ActorPtr could be caused by the actor being in a different level
+            for ( TActorIterator<AActor> ActorIt(editorWorld); ActorIt; ++ActorIt )
+            {
+                if (ActorIt->GetPathName() == OutlinerInput.ActorPathName)
+                {
+                    OutlinerInput.ActorPtr = *ActorIt;
+                    break;
+                }
+            }
+        }
+
         UpdateInputOulinerArray();
 
         // The spline Transform array might need to be rebuilt after loading
@@ -2965,6 +3001,9 @@ void UHoudiniAssetInput::DuplicateCurves(UHoudiniAssetInput * OriginalInput)
     if( !RootComp || RootComp->IsPendingKill() )
         return;
 
+    if ( !RootComp->GetOwner() || RootComp->GetOwner()->IsPendingKill() )
+        return;
+
     // The previous call to DuplicateObject did not duplicate the curves properly
     // Both the original and duplicated Inputs now share the same InputCurve, so we 
     // need to create a proper copy of that curve
@@ -3290,7 +3329,7 @@ void UHoudiniAssetInput::SetDefaultInputTypeFromLabel()
         newInputType = EHoudiniAssetInputType::WorldInput;
 
     else if ( ( inputName.Contains( assetPrefix, ESearchCase::IgnoreCase ) )
-            || ( inputName.Contains( assetPrefix, ESearchCase::IgnoreCase ) ) )
+            || ( inputName.Contains( assetPrefix2, ESearchCase::IgnoreCase ) ) )
         newInputType = EHoudiniAssetInputType::AssetInput;
 
     if ( ChoiceIndex != newInputType )
@@ -3370,23 +3409,18 @@ UHoudiniAssetInput::UpdateInputOulinerArrayFromActor( AActor * Actor, const bool
     if ( GetHoudiniAssetComponent() && ( Actor == GetHoudiniAssetComponent()->GetOwner() ) )
         return;
 
-    // Destroy previous outliner inputs from this actor if needed
-    if ( NeedCleanUp )
+    // Destroy previous outliner inputs linked to this actor if needed
+    if (NeedCleanUp)
     {
-        for ( int32 n = InputOutlinerMeshArray.Num() - 1; n >= 0; n-- )
+        for (int32 n = InputOutlinerMeshArray.Num() - 1; n >= 0; n--)
         {
-            if ( InputOutlinerMeshArray[ n ].ActorPtr.Get() != Actor )
+            if (InputOutlinerMeshArray[n].ActorPtr.Get() != Actor)
                 continue;
 
-            // Destroy/Disconnect the input properly before re;oving it from the array
-            if ( FHoudiniEngineUtils::IsValidNodeId( InputOutlinerMeshArray[n].AssetId ) )
-            {
-                FHoudiniEngineUtils::HapiDisconnectAsset( ConnectedAssetId, n );
-                FHoudiniEngineUtils::DestroyHoudiniAsset( InputOutlinerMeshArray[n].AssetId );
-                InputOutlinerMeshArray[n].AssetId = -1;
-            }
-
-            InputOutlinerMeshArray.RemoveAt( n );
+            // Remove from the input array.
+            // No need to destroy the houdini nodes since this will be taken care of
+            // when we update the input. (see bug 95415)
+            InputOutlinerMeshArray.RemoveAt(n);
         }
     }
 
@@ -3411,6 +3445,7 @@ UHoudiniAssetInput::UpdateInputOulinerArrayFromActor( AActor * Actor, const bool
                 // Add the mesh to the array
                 FHoudiniAssetInputOutlinerMesh OutlinerMesh;
                 OutlinerMesh.ActorPtr = Actor;
+                OutlinerMesh.ActorPathName = Actor->GetPathName();
                 OutlinerMesh.StaticMeshComponent = InstancedStaticMeshComponent;
                 OutlinerMesh.StaticMesh = StaticMesh;
                 OutlinerMesh.SplineComponent = nullptr;
@@ -3425,9 +3460,10 @@ UHoudiniAssetInput::UpdateInputOulinerArrayFromActor( AActor * Actor, const bool
         }
         else
         {
-            // Add the mesh to the array
+            // Add the Static Mesh to the array
             FHoudiniAssetInputOutlinerMesh OutlinerMesh;
             OutlinerMesh.ActorPtr = Actor;
+            OutlinerMesh.ActorPathName = Actor->GetPathName();
             OutlinerMesh.StaticMeshComponent = StaticMeshComponent;
             OutlinerMesh.StaticMesh = StaticMesh;
             OutlinerMesh.SplineComponent = nullptr;
@@ -3451,6 +3487,7 @@ UHoudiniAssetInput::UpdateInputOulinerArrayFromActor( AActor * Actor, const bool
         FHoudiniAssetInputOutlinerMesh OutlinerMesh;
 
         OutlinerMesh.ActorPtr = Actor;
+        OutlinerMesh.ActorPathName = Actor->GetPathName();
         OutlinerMesh.StaticMeshComponent = nullptr;
         OutlinerMesh.StaticMesh = nullptr;
         OutlinerMesh.SplineComponent = SplineComponent;
@@ -3816,7 +3853,7 @@ UHoudiniAssetInput::AddInputObject( UObject* ObjectToAdd )
 
 #endif
 
-ALandscape*
+ALandscapeProxy*
 UHoudiniAssetInput::GetLandscapeInput()
 {
     if (!InputLandscapeProxy || InputLandscapeProxy->IsPendingKill())

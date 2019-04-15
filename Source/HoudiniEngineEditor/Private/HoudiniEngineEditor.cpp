@@ -63,7 +63,6 @@
 #include "Serialization/JsonSerializer.h"
 #include "Interfaces/IPluginManager.h"
 
-
 #define LOCTEXT_NAMESPACE HOUDINI_LOCTEXT_NAMESPACE 
 
 #define IMAGE_BRUSH( RelativePath, ... ) FSlateImageBrush( StyleSet->RootToContentDir( RelativePath, TEXT(".png") ), __VA_ARGS__ )
@@ -796,7 +795,7 @@ FHoudiniEngineEditor::GetHoudiniEnginePluginDir()
     if ( FPaths::DirectoryExists(EnginePluginDir) )
         return EnginePluginDir;
 
-    FString ProjectPluginDir = FPaths::ProjectPluginsDir() / TEXT("Runtime/HoudiniEngine");
+	FString ProjectPluginDir = FPaths::ProjectPluginsDir() / TEXT("Runtime/HoudiniEngine");
     if ( FPaths::DirectoryExists(ProjectPluginDir) )
         return ProjectPluginDir;
 

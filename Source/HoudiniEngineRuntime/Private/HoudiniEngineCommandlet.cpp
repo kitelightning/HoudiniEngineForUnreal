@@ -454,6 +454,8 @@ bool FHoudiniCommandletUtils::LoadBGEOFileInHAPI( const FString& InputFilePath, 
     CookOptions.clearErrorsAndWarnings = false;
     CookOptions.maxVerticesPerPrimitive = 3;
     CookOptions.splitGeosByGroup = false;
+    CookOptions.splitGeosByAttribute = false;
+    CookOptions.splitAttrSH = 0;
     CookOptions.refineCurveToLinear = true;
     CookOptions.handleBoxPartTypes = false;
     CookOptions.handleSpherePartTypes = false;
@@ -495,6 +497,9 @@ bool FHoudiniCommandletUtils::CreateStaticMeshes(
     const FString& InputName, HAPI_NodeId& NodeId, UPackage* OuterPackage,
     TMap<FHoudiniGeoPartObject, UStaticMesh *>& StaticMeshesOut )
 {
+	if (!OuterPackage || OuterPackage->IsPendingKill())
+		return false;
+
     // Create a "fake" HoudiniAssetComponent
     FName HACName( *InputName );
     UHoudiniAssetComponent* HoudiniAssetComponent = NewObject< UHoudiniAssetComponent >( OuterPackage, HACName );
