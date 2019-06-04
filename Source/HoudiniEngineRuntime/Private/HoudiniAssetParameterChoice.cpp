@@ -21,8 +21,9 @@
 *
 */
 
-#include "HoudiniApi.h"
 #include "HoudiniAssetParameterChoice.h"
+
+#include "HoudiniApi.h"
 #include "HoudiniEngineRuntimePrivatePCH.h"
 #include "HoudiniAssetComponent.h"
 #include "HoudiniEngine.h"
@@ -180,7 +181,7 @@ UHoudiniAssetParameterChoice::CreateParameter(
 TOptional< TSharedPtr< FString > >
 UHoudiniAssetParameterChoice::GetValue( int32 Idx ) const
 {
-    if ( Idx == 0 )
+    if ( Idx == 0 && StringChoiceValues.IsValidIndex(CurrentValue) )
         return TOptional< TSharedPtr< FString > >( StringChoiceValues[ CurrentValue ] );
 
     return TOptional< TSharedPtr< FString > >();
@@ -231,7 +232,7 @@ UHoudiniAssetParameterChoice::UploadParameterValue()
     if ( bStringChoiceList )
     {
         // Get corresponding value.
-        FString* ChoiceValue = StringChoiceValues[ CurrentValue ].Get();
+        FString* ChoiceValue = StringChoiceValues.IsValidIndex(CurrentValue) ? StringChoiceValues[ CurrentValue ].Get() : nullptr;
         std::string String = TCHAR_TO_UTF8( *( *ChoiceValue ) );
         FHoudiniApi::SetParmStringValue( FHoudiniEngine::Get().GetSession(), NodeId, String.c_str(), ParmId, 0 );
     }

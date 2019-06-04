@@ -29,8 +29,9 @@
 *
 */
 
-#include "HoudiniApi.h"
 #include "HoudiniLandscapeUtils.h"
+
+#include "HoudiniApi.h"
 #include "HoudiniEngineRuntimePrivatePCH.h"
 #include "HoudiniRuntimeSettings.h"
 #include "HoudiniEngineUtils.h"
@@ -52,8 +53,8 @@
 #if WITH_EDITOR
     #include "FileHelpers.h"
     #include "EngineUtils.h"
-    #include "Editor/LandscapeEditor/Public/LandscapeEditorModule.h"
-    #include "Editor/LandscapeEditor/Public/LandscapeFileFormatInterface.h"
+    #include "LandscapeEditorModule.h"
+    #include "LandscapeFileFormatInterface.h"
 #endif
 
 void
@@ -128,7 +129,7 @@ FHoudiniLandscapeUtils::GetHeightfieldsLayersInArray(
             Heightfield, "tile",
             AttribInfoTile, TileValues );
 
-        if ( AttribInfoTile.exists && AttribInfoTile.owner == HAPI_ATTROWNER_PRIM )
+        if ( AttribInfoTile.exists && AttribInfoTile.owner == HAPI_ATTROWNER_PRIM && TileValues.Num() > 0 )
         {
             HeightFieldTile = TileValues[ 0 ];
             bParentHeightfieldHasTile = true;
@@ -158,12 +159,11 @@ FHoudiniLandscapeUtils::GetHeightfieldsLayersInArray(
 
             HAPI_AttributeInfo AttribInfoTile{};
             TArray<int32> TileValues;
-
             FHoudiniEngineUtils::HapiGetAttributeDataAsInteger(
                 HoudiniGeoPartObject, "tile",
                 AttribInfoTile, TileValues );
 
-            if ( AttribInfoTile.exists && AttribInfoTile.owner == HAPI_ATTROWNER_PRIM )
+            if ( AttribInfoTile.exists && AttribInfoTile.owner == HAPI_ATTROWNER_PRIM && TileValues.Num() > 0 )
             {
                 CurrentTile = TileValues[ 0 ];
             }
@@ -388,7 +388,7 @@ bool FHoudiniLandscapeUtils::GetHeightfieldData(
     // We will need the min and max value for the conversion to uint16
     FloatMin = FloatValues[0];
     FloatMax = FloatMin;
-    for ( int32 n = 0; n < SizeInPoints; n++ )
+    for ( int32 n = 0; n < FloatValues.Num(); n++ )
     {
         if ( FloatValues[ n ] > FloatMax )
             FloatMax = FloatValues[ n ];
@@ -1065,7 +1065,7 @@ FHoudiniLandscapeUtils::CreateHeightfieldFromLandscape(
     //--------------------------------------------------------------------------------------------------
     TArray<float> HeightfieldFloatValues;
     HAPI_VolumeInfo HeightfieldVolumeInfo;
-    FTransform LandscapeTransform = LandscapeProxy->LandscapeActorToWorld();
+    FTransform LandscapeTransform = LandscapeProxy->ActorToWorld();
     FVector CenterOffset = FVector::ZeroVector;
     if ( !ConvertLandscapeDataToHeightfieldData(
         HeightData, XSize, YSize, Min, Max, LandscapeTransform,
@@ -1567,8 +1567,12 @@ FHoudiniLandscapeUtils::GetLandscapeData(
     int32 MaxX = -MAX_int32;
     int32 MaxY = -MAX_int32;
 
-    if (!LandscapeInfo->GetLandscapeExtent(MinX, MinY, MaxX, MaxY))
-        return false;
+    // To handle streaming proxies correctly, get the extents via all the components,
+    // not by calling GetLandscapeExtent or we'll end up sending ALL the streaming proxies.
+    for (const ULandscapeComponent* Comp : LandscapeProxy->LandscapeComponents)
+    {
+        Comp->GetComponentExtent(MinX, MinY, MaxX, MaxY);
+    }
 
     if (!GetLandscapeData(LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData, XSize, YSize))
         return false;
@@ -3874,7 +3878,10 @@ FHoudiniLandscapeUtils::UpdateOldLandscapeReference(ALandscapeProxy* OldLandscap
     bool bReturn = false;
 
     // Iterates through all the Houdini Assets in the scene
-    UWorld* editorWorld = GEditor->GetEditorWorldContext().World();
+    UWorld* editorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if ( !editorWorld )
+        return false;
+
     for ( TActorIterator<AHoudiniAssetActor> ActorItr( editorWorld ); ActorItr; ++ActorItr )
     {
         AHoudiniAssetActor* Actor = *ActorItr;
@@ -4213,15 +4220,11 @@ FHoudiniLandscapeUtils::IsUnitLandscapeLayer(const FHoudiniGeoPartObject& LayerG
     // Check the value
     HAPI_AttributeInfo AttribInfoUnitLayer{};
     TArray< int32 > AttribValues;
-
     FHoudiniEngineUtils::HapiGetAttributeDataAsInteger(
         LayerGeoPartObject, "unreal_unit_landscape_layer", AttribInfoUnitLayer, AttribValues, 1, Owner);
 
-    if (AttribValues.Num() > 0)
-    {
-        if (AttribValues[0] == 1)
-            return true;
-    }
+    if (AttribValues.Num() > 0 && AttribValues[0] == 1 )
+        return true;
 
     return false;
 }

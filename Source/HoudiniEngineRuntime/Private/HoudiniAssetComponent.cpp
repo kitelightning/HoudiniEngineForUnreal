@@ -21,8 +21,9 @@
 *
 */
 
-#include "HoudiniApi.h"
 #include "HoudiniAssetComponent.h"
+
+#include "HoudiniApi.h"
 #include "HoudiniEngineRuntimePrivatePCH.h"
 #include "HoudiniEngineUtils.h"
 #include "HoudiniEngineBakeUtils.h"
@@ -91,6 +92,7 @@
 #include "StaticMeshResources.h"
 #include "Framework/Application/SlateApplication.h"
 #include "NavigationSystem.h"
+#include "FileHelpers.h"
 #endif
 #include "Internationalization/Internationalization.h"
 
@@ -105,11 +107,11 @@ class SAssetSelectionWidget : public SCompoundWidget
     public:
         SLATE_BEGIN_ARGS( SAssetSelectionWidget )
             : _WidgetWindow(), _AvailableAssetNames()
-        {}
+            {}
 
-        SLATE_ARGUMENT( TSharedPtr<SWindow>, WidgetWindow )
+            SLATE_ARGUMENT(TSharedPtr<SWindow>, WidgetWindow )
             SLATE_ARGUMENT( TArray< HAPI_StringHandle >, AvailableAssetNames )
-            SLATE_END_ARGS()
+        SLATE_END_ARGS()
 
     public:
 
@@ -143,7 +145,7 @@ class SAssetSelectionWidget : public SCompoundWidget
     protected:
 
         /** Parent widget window. **/
-        TSharedPtr< SWindow > WidgetWindow;
+        TWeakPtr< SWindow > WidgetWindow;
 
         /** List of available Houdini Engine asset names. **/
         TArray< HAPI_StringHandle > AvailableAssetNames;
@@ -244,8 +246,11 @@ SAssetSelectionWidget::OnButtonAssetPick( int32 AssetName )
 {
     SelectedAssetName = AssetName;
 
-    WidgetWindow->HideWindow();
-    WidgetWindow->RequestDestroyWindow();
+    if (TSharedPtr<SWindow> WindowPtr = WidgetWindow.Pin())
+    {
+        WindowPtr->HideWindow();
+        WindowPtr->RequestDestroyWindow();
+    }
 
     return FReply::Handled();
 }
@@ -253,8 +258,11 @@ SAssetSelectionWidget::OnButtonAssetPick( int32 AssetName )
 FReply
 SAssetSelectionWidget::OnButtonOk()
 {
-    WidgetWindow->HideWindow();
-    WidgetWindow->RequestDestroyWindow();
+    if (TSharedPtr<SWindow> WindowPtr = WidgetWindow.Pin())
+    {
+        WindowPtr->HideWindow();
+        WindowPtr->RequestDestroyWindow();
+    }
 
     return FReply::Handled();
 }
@@ -264,8 +272,11 @@ SAssetSelectionWidget::OnButtonCancel()
 {
     bIsCancelled = true;
 
-    WidgetWindow->HideWindow();
-    WidgetWindow->RequestDestroyWindow();
+    if (TSharedPtr<SWindow> WindowPtr = WidgetWindow.Pin())
+    {
+        WindowPtr->HideWindow();
+        WindowPtr->RequestDestroyWindow();
+    }
 
     return FReply::Handled();
 }
@@ -278,7 +289,8 @@ SAssetSelectionWidget::OnButtonCancel()
     do \
     { \
         TArray< UActorComponent * > ReregisterComponents; \
-        const auto & LocalAttachChildren = GetAttachChildren(); \
+        TArray< USceneComponent * > LocalAttachChildren;\
+        GetChildrenComponents(true, LocalAttachChildren); \
         for ( TArray< USceneComponent * >::TConstIterator Iter( LocalAttachChildren ); Iter; ++Iter ) \
         { \
             COMPONENT_CLASS * Component = Cast< COMPONENT_CLASS >( *Iter ); \
@@ -441,7 +453,7 @@ UHoudiniAssetComponent::AddReferencedObjects( UObject * InThis, FReferenceCollec
             Iter( HoudiniAssetComponent->StaticMeshes ); Iter; ++Iter )
         {
             UStaticMesh * StaticMesh = Iter.Value();
-            if ( StaticMesh && !StaticMesh->IsPendingKill() )
+            if ( StaticMesh && StaticMesh->IsValidLowLevel() && !StaticMesh->IsPendingKill() )
                 Collector.AddReferencedObject( StaticMesh, InThis );
         }
 
@@ -452,14 +464,24 @@ UHoudiniAssetComponent::AddReferencedObjects( UObject * InThis, FReferenceCollec
             UStaticMesh * StaticMesh = Iter.Key();
             UStaticMeshComponent * StaticMeshComponent = Iter.Value();
 
-            if (!StaticMeshComponent || StaticMeshComponent->IsPendingKill())
-                continue;
-
-            if (!StaticMesh || StaticMesh->IsPendingKill())
+            if (!StaticMesh || !StaticMeshComponent->IsValidLowLevel() || StaticMesh->IsPendingKill())
                 continue;
 
             Collector.AddReferencedObject( StaticMesh, InThis );
+
+            if (!StaticMeshComponent || !StaticMeshComponent->IsValidLowLevel() || StaticMeshComponent->IsPendingKill())
+                continue;
+
             Collector.AddReferencedObject( StaticMeshComponent, InThis );
+        }
+
+        // Add references to all temporary cooked mesh packages
+        for (TMap< FHoudiniGeoPartObject, TWeakObjectPtr<class UPackage> > ::TIterator
+            Iter(HoudiniAssetComponent->CookedTemporaryStaticMeshPackages); Iter; ++Iter)
+        {
+            UPackage * MeshPackage = Iter.Value().Get();
+            if (MeshPackage && !MeshPackage->IsPendingKill())
+                Collector.AddReferencedObject(MeshPackage, InThis);
         }
 
         // Add references to all spline components.
@@ -467,7 +489,7 @@ UHoudiniAssetComponent::AddReferencedObjects( UObject * InThis, FReferenceCollec
             Iter( HoudiniAssetComponent->SplineComponents ); Iter; ++Iter )
         {
             UHoudiniSplineComponent * HoudiniSplineComponent = Iter.Value().Get();
-            if ( !HoudiniSplineComponent )
+            if ( !HoudiniSplineComponent || !HoudiniSplineComponent->IsValidLowLevel() || HoudiniSplineComponent->IsPendingKill() )
                 continue;
 
             Collector.AddReferencedObject( HoudiniSplineComponent, InThis );
@@ -478,7 +500,7 @@ UHoudiniAssetComponent::AddReferencedObjects( UObject * InThis, FReferenceCollec
             Iter( HoudiniAssetComponent->LandscapeComponents ); Iter; ++Iter)
         {
             ALandscapeProxy * HoudiniLandscape = Iter.Value().Get();
-            if ( !HoudiniLandscape )
+            if ( !HoudiniLandscape || HoudiniLandscape->IsPendingKill() )
                 continue;
 
             Collector.AddReferencedObject( HoudiniLandscape, InThis );
@@ -489,7 +511,7 @@ UHoudiniAssetComponent::AddReferencedObjects( UObject * InThis, FReferenceCollec
             Iter( HoudiniAssetComponent->CookedTemporaryLandscapeLayers ); Iter; ++Iter )
         {
             UPackage * LayerPackage = Iter.Key().Get();
-            if ( LayerPackage )
+            if ( LayerPackage && !LayerPackage->IsPendingKill() )
                 Collector.AddReferencedObject( LayerPackage, InThis );
         }
 
@@ -506,6 +528,16 @@ UHoudiniAssetComponent::AddReferencedObjects( UObject * InThis, FReferenceCollec
         UHoudiniAssetComponentMaterials* HoudiniAssetComponentMaterials = HoudiniAssetComponent->HoudiniAssetComponentMaterials;
         if ( HoudiniAssetComponentMaterials && !HoudiniAssetComponentMaterials->IsPendingKill() )
             Collector.AddReferencedObject( HoudiniAssetComponent->HoudiniAssetComponentMaterials, InThis );
+
+        // Add references to all temporary cooked material packages
+        for (TMap< FString, TWeakObjectPtr<class UPackage> > ::TIterator
+            Iter(HoudiniAssetComponent->CookedTemporaryPackages); Iter; ++Iter)
+        {
+            UPackage * MaterialPackage = Iter.Value().Get();
+            if (MaterialPackage && !MaterialPackage->IsPendingKill())
+                Collector.AddReferencedObject(MaterialPackage, InThis);
+        }
+
     }
 
     // Call base implementation.
@@ -1513,11 +1545,17 @@ UHoudiniAssetComponent::TickHoudiniComponent()
                 }
             }
 
+            FString DisplayName;
+            if (GetOwner())
+                DisplayName = (GetOwner()->GetName());
+            else
+                DisplayName = GetName();
+
             switch( TaskInfo.TaskState )
             {
                 case EHoudiniEngineTaskState::FinishedInstantiation:
                 {
-                    HOUDINI_LOG_MESSAGE( TEXT("    %s FinishedInstantiation." ), *GetOwner()->GetName() );
+                    HOUDINI_LOG_MESSAGE( TEXT("    %s FinishedInstantiation." ), *DisplayName );
 
                     if ( FHoudiniEngineUtils::IsValidNodeId( TaskInfo.AssetId ) )
                     {
@@ -1568,7 +1606,7 @@ UHoudiniAssetComponent::TickHoudiniComponent()
                     else
                     {
                         bStopTicking = true;
-                        HOUDINI_LOG_MESSAGE( TEXT( "    %s Received invalid asset id." ), *GetOwner()->GetName() );
+                        HOUDINI_LOG_MESSAGE( TEXT( "    %s Received invalid asset id." ), *DisplayName );
                     }
 
                     break;
@@ -1576,7 +1614,7 @@ UHoudiniAssetComponent::TickHoudiniComponent()
 
                 case EHoudiniEngineTaskState::FinishedCooking:
                 {
-                    HOUDINI_LOG_MESSAGE( TEXT( "   %s FinishedCooking." ), *GetOwner()->GetName() );
+                    HOUDINI_LOG_MESSAGE( TEXT( "   %s FinishedCooking." ), *DisplayName );
 
                     if ( FHoudiniEngineUtils::IsValidNodeId( TaskInfo.AssetId ) )
                     {
@@ -1604,7 +1642,7 @@ UHoudiniAssetComponent::TickHoudiniComponent()
                     }
                     else
                     {
-                        HOUDINI_LOG_MESSAGE( TEXT( "    %s Received invalid asset id." ), *GetOwner()->GetName() );
+                        HOUDINI_LOG_MESSAGE( TEXT( "    %s Received invalid asset id." ), *DisplayName );
                     }
 
                     if ( NotificationPtr.IsValid() && bDisplaySlateCookingNotifications )
@@ -1630,7 +1668,7 @@ UHoudiniAssetComponent::TickHoudiniComponent()
 
                 case EHoudiniEngineTaskState::FinishedCookingWithErrors:
                 {
-                    HOUDINI_LOG_MESSAGE( TEXT( "    %s FinishedCookingWithErrors." ), *GetOwner()->GetName() );
+                    HOUDINI_LOG_MESSAGE( TEXT( "    %s FinishedCookingWithErrors." ), *DisplayName );
 
                     if ( FHoudiniEngineUtils::IsValidNodeId( TaskInfo.AssetId ) )
                     {
@@ -1694,7 +1732,7 @@ UHoudiniAssetComponent::TickHoudiniComponent()
                 case EHoudiniEngineTaskState::Aborted:
                 case EHoudiniEngineTaskState::FinishedInstantiationWithErrors:
                 {
-                    HOUDINI_LOG_ERROR( TEXT( "    %s FinishedInstantiationWithErrors." ), *GetOwner()->GetName() );
+                    HOUDINI_LOG_ERROR( TEXT( "    %s FinishedInstantiationWithErrors." ), *DisplayName );
 
                     bool bLicensingIssue = false;
                     switch( TaskInfo.Result )
@@ -1886,17 +1924,8 @@ UHoudiniAssetComponent::TickHoudiniComponent()
 #ifdef WITH_EDITOR
         // notify navigation system
         AHoudiniAssetActor* HoudiniActor = GetHoudiniAssetActorOwner();
-        FNavigationSystem::UpdateActorAndComponentData(*HoudiniActor);
-        /*
-        // We need to update the navigation system manually with the Actor or the NavMesh will not update properly
-        UWorld* World = GEditor->GetEditorWorldContext().World();
-        if (World && World->GetNavigationSystem())
-        {
-            AHoudiniAssetActor* HoudiniActor = GetHoudiniAssetActorOwner();
-            if(HoudiniActor)
-                World->GetNavigationSystem()->UpdateActorAndComponentData(*HoudiniActor);
-        }
-        */
+        if ( HoudiniActor && !HoudiniActor->IsPendingKill() )
+            FNavigationSystem::UpdateActorAndComponentData(*HoudiniActor);
 #endif
         bNeedToUpdateNavigationSystem = false;
     }
@@ -1909,7 +1938,6 @@ void
 UHoudiniAssetComponent::UpdateEditorProperties( bool bConditionalUpdate )
 {
     AHoudiniAssetActor * HoudiniAssetActor = GetHoudiniAssetActorOwner();
-
     if ( !HoudiniAssetActor )
         return;
 
@@ -2249,16 +2277,19 @@ UHoudiniAssetComponent::ResetHoudiniResources()
 void
 UHoudiniAssetComponent::SubscribeEditorDelegates()
 {
-    // Add delegate for asset post import.
-    DelegateHandleAssetPostImport =
-        FEditorDelegates::OnAssetPostImport.AddUObject( this, &UHoudiniAssetComponent::OnAssetPostImport );
-
     // Add delegate for viewport drag and drop events.
     DelegateHandleApplyObjectToActor =
         FEditorDelegates::OnApplyObjectToActor.AddUObject( this, &UHoudiniAssetComponent::OnApplyObjectToActor );
 
     if ( GEditor )
     {
+        // Add delegate for asset post import.
+        if (UImportSubsystem* ImportSys = GEditor->GetEditorSubsystem<UImportSubsystem>())
+        {
+            ImportSys->OnAssetPostImport.AddUObject(this, &UHoudiniAssetComponent::OnAssetPostImport);
+        }
+            
+        // Add delegate for actor moved.
         GEditor->OnActorMoved().AddUObject( this, &UHoudiniAssetComponent::OnActorMoved );
     }
 }
@@ -2266,14 +2297,18 @@ UHoudiniAssetComponent::SubscribeEditorDelegates()
 void
 UHoudiniAssetComponent::UnsubscribeEditorDelegates()
 {
-    // Remove delegate for asset post import.
-    FEditorDelegates::OnAssetPostImport.Remove( DelegateHandleAssetPostImport );
-
     // Remove delegate for viewport drag and drop events.
     FEditorDelegates::OnApplyObjectToActor.Remove( DelegateHandleApplyObjectToActor );
 
     if ( GEditor )
     {
+        // Remove delegate for asset post import.
+        if (UImportSubsystem* ImportSys = GEditor->GetEditorSubsystem<UImportSubsystem>())
+        {
+            ImportSys->OnAssetPostImport.Remove(DelegateHandleAssetPostImport);
+        }
+
+        // Remove delegate for actor moved.
         GEditor->OnActorMoved().RemoveAll( this );
     }
 }
@@ -2285,9 +2320,7 @@ UHoudiniAssetComponent::PostEditChangeProperty( FPropertyChangedEvent & Property
 
     if ( !bIsNativeComponent )
         return;
-
     UProperty * Property = PropertyChangedEvent.MemberProperty;
-
     if ( !Property )
         return;
 
@@ -2403,10 +2436,12 @@ UHoudiniAssetComponent::PostEditChangeProperty( FPropertyChangedEvent & Property
             {
                 HOUDINI_UPDATE_ALL_CHILD_COMPONENTS( UPrimitiveComponent, bRenderInMainPass );
             }
+            /*
             else if ( Property->GetName() == TEXT( "bRenderInMono" ) )
             {
                 HOUDINI_UPDATE_ALL_CHILD_COMPONENTS( UPrimitiveComponent, bRenderInMono );
             }
+            */
             else if ( Property->GetName() == TEXT( "bOwnerNoSee" ) )
             {
                 HOUDINI_UPDATE_ALL_CHILD_COMPONENTS( UPrimitiveComponent, bOwnerNoSee );
@@ -2470,10 +2505,12 @@ UHoudiniAssetComponent::PostEditChangeProperty( FPropertyChangedEvent & Property
             {
                 HOUDINI_UPDATE_ALL_CHILD_COMPONENTS( UPrimitiveComponent, bMultiBodyOverlap );
             }
+            /*
             else if ( Property->GetName() == TEXT( "bCheckAsyncSceneOnMove" ) )
             {
                 HOUDINI_UPDATE_ALL_CHILD_COMPONENTS( UPrimitiveComponent, bCheckAsyncSceneOnMove );
             }
+            */
             else if ( Property->GetName() == TEXT( "bTraceComplexOnMove" ) )
             {
                 HOUDINI_UPDATE_ALL_CHILD_COMPONENTS( UPrimitiveComponent, bTraceComplexOnMove );
@@ -2947,7 +2984,18 @@ UHoudiniAssetComponent::GetTempCookFolder() const
 
         return HoudiniRuntimeSettings->TemporaryCookFolder;
     }
+
     return TempCookFolder;
+}
+
+void
+UHoudiniAssetComponent::SetTempCookFolder(const FString& Folder)
+{
+    FText NewTempCookFolder = FText::FromString(Folder);
+    if (!NewTempCookFolder.EqualTo(TempCookFolder))
+    {
+        TempCookFolder = NewTempCookFolder;
+    }
 }
 
 FString UHoudiniAssetComponent::GetBakingBaseName( const FHoudiniGeoPartObject& GeoPartObject ) const
@@ -2961,17 +3009,16 @@ FString UHoudiniAssetComponent::GetBakingBaseName( const FHoudiniGeoPartObject& 
         return GeoPartObject.PartName;
     }
 
+    FString DisplayName;
     if ( GetOwner() )
-        return FString::Printf( TEXT( "%s_%d_%d_%d_%d" ),
-            *GetOwner()->GetName(),
-            GeoPartObject.ObjectId, GeoPartObject.GeoId,
-            GeoPartObject.PartId, GeoPartObject.SplitId );
+        DisplayName = GetOwner()->GetName();
     else
-        return FString::Printf(TEXT("%d_%d_%d_%d"),
-            GeoPartObject.ObjectId, GeoPartObject.GeoId,
-            GeoPartObject.PartId, GeoPartObject.SplitId );
+        DisplayName = GetName();
 
-    return FString();
+    return FString::Printf( TEXT( "%s_%d_%d_%d_%d" ),
+        *DisplayName,
+        GeoPartObject.ObjectId, GeoPartObject.GeoId,
+        GeoPartObject.PartId, GeoPartObject.SplitId );
 }
 
 FBoxSphereBounds
@@ -3309,7 +3356,7 @@ UHoudiniAssetComponent::Serialize( FArchive & Ar )
     }
 
     // Serialize format version.
-    uint32 HoudiniAssetComponentVersion = GetLinkerCustomVersion( FHoudiniCustomSerializationVersion::GUID );
+    uint32 HoudiniAssetComponentVersion = Ar.CustomVer( FHoudiniCustomSerializationVersion::GUID );
     Ar << HoudiniAssetComponentVersion;
 
     // Serialize component state.
@@ -3441,6 +3488,7 @@ UHoudiniAssetComponent::Serialize( FArchive & Ar )
         Ar << BakeNameOverrides;
     }
 
+    TArray<UPackage *> DirtyPackages;
     if (HoudiniAssetComponentVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_COOK_TEMP_PACKAGES)
     {
         TMap<FString, FString> SavedPackages;
@@ -3454,6 +3502,9 @@ UHoudiniAssetComponent::Serialize( FArchive & Ar )
                 UPackage * Package = IterPackage.Value().Get();
                 if ( !Package || UPackage::IsEmptyPackage( Package ) )
                     continue;
+
+                if (Package->IsDirty())
+                    DirtyPackages.Add(Package);
 
                 FString sValue = Package->GetFName().ToString();
 
@@ -3475,10 +3526,15 @@ UHoudiniAssetComponent::Serialize( FArchive & Ar )
 
                 UPackage * Package = nullptr;
                 if ( !PackageFile.IsEmpty() )
-                    Package = LoadPackage( nullptr, *PackageFile, LOAD_None );
+                {
+                    Package = FindPackage(nullptr, *PackageFile);
+                }
 
                 if ( !Package )
                     continue;
+
+                if ( Package->IsDirty() )
+                    DirtyPackages.Add(Package);
 
                 CookedTemporaryPackages.Add( sKey, Package );
             }
@@ -3496,9 +3552,12 @@ UHoudiniAssetComponent::Serialize( FArchive & Ar )
                 if ( !IterPackage.Value().IsValid() )
                     continue;
 
-                UPackage * Package = IterPackage.Value().Get();                
+                UPackage * Package = IterPackage.Value().Get();
                 if ( !Package || UPackage::IsEmptyPackage( Package ) )
                     continue;
+
+                if (Package->IsDirty())
+                    DirtyPackages.Add(Package);
 
                 FString sValue = Package->GetFName().ToString();
 
@@ -3520,10 +3579,15 @@ UHoudiniAssetComponent::Serialize( FArchive & Ar )
 
                 UPackage * Package = nullptr;
                 if ( !PackageFile.IsEmpty() )
-                    Package = LoadPackage( nullptr, *PackageFile, LOAD_None );
+                {
+                    Package = FindPackage(nullptr, *PackageFile);
+                }
 
                 if ( !Package )
                     continue;
+
+                if (Package->IsDirty())
+                    DirtyPackages.Add(Package);
 
                 CookedTemporaryStaticMeshPackages.Add( Key, Package );
             }
@@ -3538,9 +3602,12 @@ UHoudiniAssetComponent::Serialize( FArchive & Ar )
                 if (!IterPackage.Key().IsValid())
                     continue;
 
-                UPackage * Package = IterPackage.Key().Get();                
+                UPackage * Package = IterPackage.Key().Get();
                 if ( !Package || UPackage::IsEmptyPackage( Package ) )
                     continue;
+
+                if ( Package->IsDirty() )
+                    DirtyPackages.Add(Package);
 
                 FString sKey = Package->GetFName().ToString();
 
@@ -3562,15 +3629,33 @@ UHoudiniAssetComponent::Serialize( FArchive & Ar )
 
                 UPackage * Package = nullptr;
                 if ( !PackageFile.IsEmpty() )
-                    Package = LoadPackage( nullptr, *PackageFile, LOAD_None );
+                {
+                    Package = FindPackage(nullptr, *PackageFile);
+                }
 
                 if ( !Package )
                     continue;
+
+                if ( Package->IsDirty() )
+                    DirtyPackages.Add(Package);
 
                 CookedTemporaryLandscapeLayers.Add( Package, Value );
             }
         }
     }
+
+#if WITH_EDITOR
+    if (DirtyPackages.Num() > 0)
+    {
+        if (Ar.IsSaving() && !Ar.IsTransacting())
+        {
+            // Save the dirty packages that we're still using
+            const bool bCheckDirty = false;
+            const bool bPromptToSave = false;
+            FEditorFileUtils::PromptForCheckoutAndSave(DirtyPackages, bCheckDirty, bPromptToSave);
+        }
+    }
+#endif
 
     if ( Ar.IsLoading() && bIsNativeComponent )
     {
@@ -3888,6 +3973,57 @@ void UHoudiniAssetComponent::SanitizePostLoad()
             }
         }
     }
+
+    /*
+    // Fetch the dirty package that need to be reloaded
+    TArray<UPackage *> DirtyPackages;
+    for (TMap<FString, TWeakObjectPtr< UPackage > > ::TIterator IterPackage(CookedTemporaryPackages); IterPackage; ++IterPackage)
+    {
+        if (!IterPackage.Value().IsValid())
+            continue;
+
+        UPackage * Package = IterPackage.Value().Get();
+        if (!Package || UPackage::IsEmptyPackage(Package))
+            continue;
+
+        if (Package->IsDirty())
+            DirtyPackages.Add(Package);
+    }
+
+    for (TMap<FHoudiniGeoPartObject, TWeakObjectPtr< UPackage > > ::TIterator IterPackage(CookedTemporaryStaticMeshPackages); IterPackage; ++IterPackage)
+    {
+        if (!IterPackage.Value().IsValid())
+            continue;
+
+        UPackage * Package = IterPackage.Value().Get();
+        if (!Package || UPackage::IsEmptyPackage(Package))
+            continue;
+
+        if (Package->IsDirty())
+            DirtyPackages.Add(Package);
+    }
+
+    for (TMap<TWeakObjectPtr< UPackage >, FHoudiniGeoPartObject > ::TIterator IterPackage(CookedTemporaryLandscapeLayers); IterPackage; ++IterPackage)
+    {
+        if (!IterPackage.Key().IsValid())
+            continue;
+
+        UPackage * Package = IterPackage.Key().Get();
+        if (!Package || UPackage::IsEmptyPackage(Package))
+            continue;
+
+        if (Package->IsDirty())
+            DirtyPackages.Add(Package);
+    }
+
+    if (DirtyPackages.Num() > 0)
+    {
+        FlushAsyncLoading();
+
+        FText ErrorMessage;
+        UPackageTools::ReloadPackages(DirtyPackages, ErrorMessage, UPackageTools::EReloadPackagesInteractionMode::AssumePositive);
+    }
+    */
 }
 
 void
@@ -4274,7 +4410,7 @@ UHoudiniAssetComponent::UploadChangedParameters()
 
     if( !Success )
     {
-        HOUDINI_LOG_ERROR(TEXT("%s UploadChangedParameters failed"), *GetOwner()->GetName());
+        HOUDINI_LOG_ERROR(TEXT("%s UploadChangedParameters failed"), GetOwner() ? *GetOwner()->GetName() : *GetName());
     }
 
     // We no longer have changed parameters.
@@ -4359,7 +4495,7 @@ UHoudiniAssetComponent::CreateHandles()
 
             if( HandleType == EHoudiniHandleType::Unsupported )
             {
-                HOUDINI_LOG_DISPLAY( TEXT( "%s: Unsupported Handle Type %s for handle %s" ), *GetOwner()->GetName(), *TypeName, *HandleName );
+                HOUDINI_LOG_DISPLAY( TEXT( "%s: Unsupported Handle Type %s for handle %s" ), GetOwner() ? *(GetOwner()->GetName()) : *GetName(), *TypeName, *HandleName );
                 continue;
             }
 
@@ -4480,7 +4616,7 @@ UHoudiniAssetComponent::UpdateLoadedInputs( const bool& ForceRefresh )
 
     if( !Success )
     {
-        HOUDINI_LOG_ERROR(TEXT("%s UpdateLoadedInputs failed"), *GetOwner()->GetName());
+        HOUDINI_LOG_ERROR(TEXT("%s UpdateLoadedInputs failed"), GetOwner() ? *(GetOwner()->GetName()) : *GetName());
     }
 }
 
@@ -4673,7 +4809,7 @@ UHoudiniAssetComponent::CreateInstanceInputs( const TArray< FHoudiniGeoPartObjec
             if ( !HoudiniAssetInstanceInput || HoudiniAssetInstanceInput->IsPendingKill() )
             {
                 // Invalid instance input.
-                HOUDINI_LOG_WARNING( TEXT( "%s: Failed to create Instancer from part %s" ), *GetOwner()->GetName(), *GeoPart.GetNodePath() );
+                HOUDINI_LOG_WARNING( TEXT( "%s: Failed to create Instancer from part %s" ), GetOwner() ? *(GetOwner()->GetName()) : *GetName(), *GeoPart.GetNodePath() );
             }
             else
             {
@@ -5120,7 +5256,7 @@ UHoudiniAssetComponent::ClearParameters()
         else if(GetWorld() != NULL && GetWorld()->WorldType != EWorldType::PIE)
         {
             // Avoid spamming that error when leaving PIE mode
-            HOUDINI_LOG_WARNING(TEXT("%s: null parameter when clearing"), *GetOwner()->GetName());
+            HOUDINI_LOG_WARNING(TEXT("%s: null parameter when clearing"), GetOwner() ? *(GetOwner()->GetName()) : *GetName());
         }
     }
 
@@ -5196,7 +5332,7 @@ UHoudiniAssetComponent::ClearDownstreamAssets()
                 }
 
                 if ( !DidADisconnect )
-                    HOUDINI_LOG_ERROR( TEXT( "%s: Invalid downstream asset connection" ), *GetOwner()->GetName() );
+                    HOUDINI_LOG_ERROR( TEXT( "%s: Invalid downstream asset connection" ), GetOwner() ? *(GetOwner()->GetName()) : *GetName());
             }
         }
     }
@@ -5220,7 +5356,7 @@ UHoudiniAssetComponent::ClearCookTempFile()
             continue;
 
         Package->ClearFlags( RF_Standalone );
-        Package->ConditionalBeginDestroy();
+        //Package->ConditionalBeginDestroy();
     }
 
     CookedTemporaryPackages.Empty();
@@ -5234,7 +5370,7 @@ UHoudiniAssetComponent::ClearCookTempFile()
             continue;
 
         Package->ClearFlags( RF_Standalone );
-        Package->ConditionalBeginDestroy();
+        //Package->ConditionalBeginDestroy();
     }
 
     CookedTemporaryStaticMeshPackages.Empty();
@@ -5248,7 +5384,7 @@ UHoudiniAssetComponent::ClearCookTempFile()
             continue;
 
         Package->ClearFlags( RF_Standalone );
-        Package->ConditionalBeginDestroy();
+        //Package->ConditionalBeginDestroy();
     }
 
     CookedTemporaryLandscapeLayers.Empty();
@@ -5386,7 +5522,7 @@ UHoudiniAssetComponent::SerializeInstanceInputs( FArchive & Ar )
         if ( !Ar.IsTransacting() )
             ClearInstanceInputs();
         
-        int32 HoudiniAssetComponentVersion = GetLinkerCustomVersion( FHoudiniCustomSerializationVersion::GUID );
+        int32 HoudiniAssetComponentVersion = Ar.CustomVer( FHoudiniCustomSerializationVersion::GUID );
         if ( HoudiniAssetComponentVersion > VER_HOUDINI_ENGINE_COMPONENT_PARAMETER_NAME_MAP )
         {
             Ar << InstanceInputs;

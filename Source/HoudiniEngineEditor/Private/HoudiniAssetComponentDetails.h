@@ -60,6 +60,8 @@ uint32 GetTypeHash(TPair< ALandscapeProxy *, int32 > Pair);
 
 class FHoudiniAssetComponentDetails : public IDetailCustomization
 {
+    friend class FHoudiniParameterDetails;
+
     public:
 
         /** Constructor. **/
@@ -142,6 +144,9 @@ class FHoudiniAssetComponentDetails : public IDetailCustomization
 
         /** Get the text for display of baking folder */
         FText GetBakeFolderText() const;
+
+        /** Handler for changing the temporary cook folder */
+        void OnCookFolderSelected(const FString& Folder);
 
         /** Get the text for displaying the temporary cook folder */
         FText GetTempCookFolderText() const;

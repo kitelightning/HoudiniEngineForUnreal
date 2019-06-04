@@ -21,8 +21,9 @@
 *
 */
 
-#include "HoudiniApi.h"
 #include "HoudiniAssetParameterFloat.h"
+
+#include "HoudiniApi.h"
 #include "HoudiniEngineRuntimePrivatePCH.h"
 #include "HoudiniEngineUtils.h"
 #include "HoudiniAssetComponent.h"
@@ -113,6 +114,7 @@ UHoudiniAssetParameterFloat::CreateParameter(
 
     if ( TupleSize <= 0 )
         return false;
+
     Values.SetNumZeroed(TupleSize);
 
     // Get the actual value for this property.
@@ -213,6 +215,9 @@ UHoudiniAssetParameterFloat::CreateParameter(
 bool
 UHoudiniAssetParameterFloat::UploadParameterValue()
 {
+    if ( Values.Num() <= 0 )
+        return false;
+
     if ( FHoudiniApi::SetParmFloatValues( FHoudiniEngine::Get().GetSession(), NodeId, &Values[ 0 ],
         ValuesIndex, TupleSize ) != HAPI_RESULT_SUCCESS )
     {
@@ -252,7 +257,7 @@ UHoudiniAssetParameterFloat::SetParameterVariantValue( const FVariant & Variant,
 
 #endif // WITH_EDITOR
 
-	Values[ Idx ] = VariantValue;
+    Values[ Idx ] = VariantValue;
     MarkChanged( bTriggerModify );
 
     return true;
@@ -261,40 +266,45 @@ UHoudiniAssetParameterFloat::SetParameterVariantValue( const FVariant & Variant,
 TOptional< float >
 UHoudiniAssetParameterFloat::GetValue( int32 Idx ) const
 {
-    return TOptional< float >( Values[ Idx ] );
+    if (Values.IsValidIndex(Idx))
+        return TOptional< float >(Values[Idx]);
+    else
+        return TOptional< float >();
 }
 
 void
 UHoudiniAssetParameterFloat::SetValue( float InValue, int32 Idx, bool bTriggerModify, bool bRecordUndo )
 {
-    if ( InValue != Values[ Idx ] )
-    {
+    if (!Values.IsValidIndex(Idx))
+        return;
+
+    if (InValue == Values[Idx])
+        return;
 
 #if WITH_EDITOR
 
-        // If this is not a slider change (user typed in values manually), record undo information.
-        FScopedTransaction Transaction(
-            TEXT( HOUDINI_MODULE_RUNTIME ),
-            LOCTEXT( "HoudiniAssetParameterFloatChange", "Houdini Parameter Float: Changing a value" ),
-            PrimaryObject );
-        Modify();
+    // If this is not a slider change (user typed in values manually), record undo information.
+    FScopedTransaction Transaction(
+        TEXT( HOUDINI_MODULE_RUNTIME ),
+        LOCTEXT( "HoudiniAssetParameterFloatChange", "Houdini Parameter Float: Changing a value" ),
+        PrimaryObject );
+    Modify();
 
-        if ( !bRecordUndo )
-            Transaction.Cancel();
+    if ( !bRecordUndo )
+        Transaction.Cancel();
 
 #endif // WITH_EDITOR
 
-        Values[ Idx ] = FMath::Clamp< float >( InValue, ValueMin, ValueMax );
+    Values[ Idx ] = FMath::Clamp< float >( InValue, ValueMin, ValueMax );
 
-        // Mark this parameter as changed.
-        MarkChanged( bTriggerModify );
-    }
+    // Mark this parameter as changed.
+    MarkChanged( bTriggerModify );
 }
 
 float
 UHoudiniAssetParameterFloat::GetParameterValue( int32 Idx, float DefaultValue ) const
 {
-    if ( Values.Num() <= Idx )
+    if ( !Values.IsValidIndex(Idx) )
         return DefaultValue;
 
     return Values[ Idx ];

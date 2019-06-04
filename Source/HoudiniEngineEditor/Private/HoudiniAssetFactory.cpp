@@ -29,8 +29,9 @@
  *
  */
 
-#include "HoudiniApi.h"
 #include "HoudiniAssetFactory.h"
+
+#include "HoudiniApi.h"
 #include "HoudiniEngineEditorPrivatePCH.h"
 #include "HoudiniAsset.h"
 #include "EditorFramework/AssetImportData.h"
@@ -86,7 +87,7 @@ UHoudiniAssetFactory::FactoryCreateBinary(
     const uint8 * BufferEnd, FFeedbackContext * Warn )
 {
     // Broadcast notification that a new asset is being imported.
-    FEditorDelegates::OnAssetPreImport.Broadcast( this, InClass, InParent, InName, Type );
+    GEditor->GetEditorSubsystem<UImportSubsystem>()->BroadcastAssetPreImport(this, InClass, InParent, InName, Type);
 
     // Create a new asset.
     UHoudiniAsset * HoudiniAsset = NewObject< UHoudiniAsset >( InParent, InName, Flags );
@@ -103,7 +104,7 @@ UHoudiniAssetFactory::FactoryCreateBinary(
     AssetImportData->Update( UFactory::GetCurrentFilename() );
 
     // Broadcast notification that the new asset has been imported.
-    FEditorDelegates::OnAssetPostImport.Broadcast( this, HoudiniAsset );
+    GEditor->GetEditorSubsystem<UImportSubsystem>()->BroadcastAssetPostImport(this, HoudiniAsset);
 
     return HoudiniAsset;
 }

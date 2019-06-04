@@ -21,8 +21,9 @@
 *
 */
 
-#include "HoudiniApi.h"
 #include "HoudiniAssetInstanceInput.h"
+
+#include "HoudiniApi.h"
 #include "HoudiniEngineRuntimePrivatePCH.h"
 #include "HoudiniEngineUtils.h"
 #include "HoudiniAssetComponent.h"
@@ -56,8 +57,8 @@ UHoudiniAssetInstanceInput::Create(
     UHoudiniAssetComponent * InPrimaryObject,
     const FHoudiniGeoPartObject & InHoudiniGeoPartObject )
 {
-	if (!InPrimaryObject || InPrimaryObject->IsPendingKill())
-		return nullptr;
+    if (!InPrimaryObject || InPrimaryObject->IsPendingKill())
+        return nullptr;
 
     UHoudiniAssetInstanceInput * NewInstanceInput = nullptr;
 
@@ -731,8 +732,12 @@ FString UHoudiniAssetInstanceInput::GetFieldLabel( int32 FieldIdx, int32 Variati
 
     if ( Flags.bIsPackedPrimitiveInstancer )
     {
+        // If the packed prim itself has a cutsom name, use it
+        // else, use the instancer's custom name
         if ( Field->GetHoudiniGeoPartObject().HasCustomName() )
             FieldNameText = Field->GetHoudiniGeoPartObject().PartName;
+        else if( HoudiniGeoPartObject.HasCustomName() )
+            FieldNameText = HoudiniGeoPartObject.PartName;
         else
             FieldNameText = Field->GetHoudiniGeoPartObject().GetNodePath();
     }
