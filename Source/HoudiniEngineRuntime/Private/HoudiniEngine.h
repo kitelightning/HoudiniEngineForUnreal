@@ -25,7 +25,7 @@
 
 #include "IHoudiniEngine.h"
 #include "HoudiniEngineTaskInfo.h"
-
+#include "HoudiniRuntimeSettings.h"
 
 class UStaticMesh;
 class FRunnableThread;
@@ -79,9 +79,17 @@ class HOUDINIENGINERUNTIME_API FHoudiniEngine : public IHoudiniEngine
         void SetEnableCookingGlobal(const bool& enableCooking);
         bool GetEnableCookingGlobal();
 
-        bool StartSession( HAPI_Session*& SessionPtr );
+        bool StartSession(
+            HAPI_Session*& SessionPtr,
+            const bool& StartAutomaticServer,
+            const float& AutomaticServerTimeout,
+            const EHoudiniRuntimeSettingsSessionType& SessionType,
+            const FString& ServerPipeName,
+            const int32& ServerPort,
+            const FString& ServerHost);
         bool StopSession( HAPI_Session*& SessionPtr );
         bool RestartSession();
+        bool InitializeHAPISession();
 
     public:
 

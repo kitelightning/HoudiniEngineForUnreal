@@ -452,6 +452,10 @@ FHoudiniEngineBakeUtils::DuplicateStaticMeshAndCreatePackage(
         if( !MeshPackage || MeshPackage->IsPendingKill() )
             return nullptr;
 
+        // We need to be sure the package has been fully loaded before calling DuplicateObject
+        if (!MeshPackage->bHasBeenFullyLoaded)
+            MeshPackage->FullyLoad();
+
         // Duplicate mesh for this new copied component.
         DuplicatedStaticMesh = DuplicateObject< UStaticMesh >( StaticMesh, MeshPackage, *MeshName );
         if ( !DuplicatedStaticMesh || DuplicatedStaticMesh->IsPendingKill() )
@@ -1316,7 +1320,7 @@ FHoudiniEngineBakeUtils::BakeLandscape( UHoudiniAssetComponent* HoudiniAssetComp
     for ( TMap< FHoudiniGeoPartObject, TWeakObjectPtr<ALandscapeProxy> >::TIterator Iter(* LandscapeComponentsPtr ); Iter; ++Iter)
     {
         ALandscapeProxy * CurrentLandscape = Iter.Value().Get();
-        if ( !CurrentLandscape || CurrentLandscape->IsPendingKill() )
+        if ( !CurrentLandscape || CurrentLandscape->IsPendingKill() || !CurrentLandscape->IsValidLowLevel() )
             continue;
 
         // If we only want to bake a single landscape

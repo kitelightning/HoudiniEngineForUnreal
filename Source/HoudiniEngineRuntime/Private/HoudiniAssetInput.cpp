@@ -43,6 +43,7 @@
 #include "Internationalization/Internationalization.h"
 #include "HoudiniEngineRuntimePrivatePCH.h"
 #include "EngineUtils.h" // for TActorIterator<>
+
 #if WITH_EDITOR
     #include "UnrealEdGlobals.h"
     #include "Editor/UnrealEdEngine.h"
@@ -62,7 +63,8 @@ FHoudiniAssetInputOutlinerMesh::Serialize( FArchive & Ar )
     Ar << HoudiniAssetParameterVersion;
 
     Ar << ActorPtr;
-    if ( HoudiniAssetParameterVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_OUTLINER_INPUT_SAVE_ACTOR_PATHNAME )
+    if ( ( HoudiniAssetParameterVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_OUTLINER_INPUT_SAVE_ACTOR_PATHNAME )
+        && ( HoudiniAssetParameterVersion != VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_419_SERIALIZATION_FIX ) )
     {
         Ar << ActorPathName;
     }
@@ -92,7 +94,13 @@ FHoudiniAssetInputOutlinerMesh::Serialize( FArchive & Ar )
     if ( HoudiniAssetParameterVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_ADDED_KEEP_TRANSFORM )
         Ar << KeepWorldTransform;
 
-    if ( HoudiniAssetParameterVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_OUTLINER_INPUT_SAVE_MAT )
+    // UE4.19 SERIALIZATION FIX:
+    // The component materials serialization (24) was actually missing in the UE4.19 H17.0 / H16.5 plugin.
+    // However subsequent serialized changes (25+) were present in those version. This caused crashes when loading
+    // a level that was saved with 4.19+16.5/17.0 on a newer version of Unreal or Houdini...
+    // If the serialized version is exactly that of the fix, we can ignore the materials paths as well
+    if ( ( HoudiniAssetParameterVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_OUTLINER_INPUT_SAVE_MAT )
+        && (HoudiniAssetParameterVersion != VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_419_SERIALIZATION_FIX ) )
         Ar << MeshComponentsMaterials;
 
     if ( HoudiniAssetParameterVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_OUTLINER_INSTANCE_INDEX )
@@ -338,10 +346,9 @@ UHoudiniAssetInput::Create( UObject * InPrimaryObject, int32 InInputIndex, HAPI_
 
     // Get name of this input.
     HAPI_StringHandle InputStringHandle;
-    if ( FHoudiniApi::GetNodeInputName(
-        FHoudiniEngine::Get().GetSession(),
-        InNodeId,
-        InInputIndex, &InputStringHandle ) != HAPI_RESULT_SUCCESS )
+    if ( HAPI_RESULT_SUCCESS != FHoudiniApi::GetNodeInputName(
+            FHoudiniEngine::Get().GetSession(),
+            InNodeId, InInputIndex, &InputStringHandle ) )
     {
         return HoudiniAssetInput;
     }
@@ -1341,7 +1348,8 @@ UHoudiniAssetInput::Serialize( FArchive & Ar )
             InputTransforms[ n ] = FTransform::Identity;
     }
 
-    if ( HoudiniAssetParameterVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_INPUT_LANDSCAPE_TRANSFORM )
+    if ( ( HoudiniAssetParameterVersion >= VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_INPUT_LANDSCAPE_TRANSFORM )
+        && ( HoudiniAssetParameterVersion != VER_HOUDINI_PLUGIN_SERIALIZATION_VERSION_419_SERIALIZATION_FIX ) )
         Ar << InputLandscapeTransform;
 }
 
@@ -1992,10 +2000,12 @@ UHoudiniAssetInput::TickWorldOutlinerInputs()
             UpdateWorldOutlinerTransforms( OutlinerInput );
 
             HAPI_TransformEuler HapiTransform;
-            FMemory::Memzero< HAPI_TransformEuler >( HapiTransform );
+            FHoudiniApi::TransformEuler_Init(&HapiTransform);
+            //FMemory::Memzero< HAPI_TransformEuler >( HapiTransform );
             FHoudiniEngineUtils::TranslateUnrealTransform( OutlinerInput.ComponentTransform, HapiTransform );
 
             HAPI_NodeInfo LocalAssetNodeInfo;
+            FHoudiniApi::NodeInfo_Init(&LocalAssetNodeInfo);
             const HAPI_Result LocalResult = FHoudiniApi::GetNodeInfo(
                 FHoudiniEngine::Get().GetSession(), OutlinerInput.AssetId,
                 &LocalAssetNodeInfo);
@@ -2237,6 +2247,7 @@ UHoudiniAssetInput::UpdateInputCurve()
 
     // We need to get the NodeInfo to get the parent id
     HAPI_NodeInfo NodeInfo;
+    FHoudiniApi::NodeInfo_Init(&NodeInfo);
     HOUDINI_CHECK_ERROR_RETURN(
         FHoudiniApi::GetNodeInfo(FHoudiniEngine::Get().GetSession(), ConnectedAssetId, &NodeInfo),
         false);
@@ -2246,7 +2257,8 @@ UHoudiniAssetInput::UpdateInputCurve()
     HoudiniGeoPartObject.bIsCurve = true;
 
     HAPI_AttributeInfo AttributeRefinedCurvePositions;
-    FMemory::Memzero< HAPI_AttributeInfo >( AttributeRefinedCurvePositions );
+    FHoudiniApi::AttributeInfo_Init(&AttributeRefinedCurvePositions);
+    //FMemory::Memzero< HAPI_AttributeInfo >( AttributeRefinedCurvePositions );
 
     TArray< float > RefinedCurvePositions;
     FHoudiniEngineUtils::HapiGetAttributeDataAsFloat(
@@ -2272,10 +2284,13 @@ UHoudiniAssetInput::UpdateInputCurve()
 
     TArray< HAPI_ParmInfo > ParmInfos;
     ParmInfos.SetNumUninitialized( NodeInfo.parmCount );
+    for (int32 Idx = 0; Idx < ParmInfos.Num(); Idx++)
+        FHoudiniApi::ParmInfo_Init(&(ParmInfos[Idx]));
+
     HOUDINI_CHECK_ERROR_RETURN(
         FHoudiniApi::GetParameters(
-            FHoudiniEngine::Get().GetSession(), ConnectedAssetId, &ParmInfos[ 0 ], 0, NodeInfo.parmCount ),
-        false);
+            FHoudiniEngine::Get().GetSession(), ConnectedAssetId, 
+            &ParmInfos[ 0 ], 0, NodeInfo.parmCount ), false);
 
     // Retrieve integer values for this asset.
     TArray< int32 > ParmValueInts;
@@ -3399,7 +3414,7 @@ UHoudiniAssetInput::UpdateInputOulinerArray()
             // This can happen when a blueprint is updated or recompiled...
             OutlinerInput.TryToUpdateActorPtrFromActorPathName();
         }
-
+        
         if ( !OutlinerInput.ActorPtr.IsValid() )
         {
             // This input has an invalid actor: destroy it and its asset
